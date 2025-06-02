@@ -2,25 +2,61 @@ const express = require('express');
 const http = require('http');
 const socketio = require('socket.io');
 
+const connect = require('./config/database-config');
+const Chat = require('./models/chat'); // Chat model
+
 const app = express();
 const server = http.createServer(app);
-const io = socketio(server);  
+const io = socketio(server);
 
-io.on('connection' ,(socket) => {
-    console.log("A User Connected" , socket.id); // every socket has a unique socket id if i do socket.id then we will get new id at every reload of web page localhost:3000
+// SOCKET CONNECTIONS
+io.on('connection', (socket) => {
+    socket.on('join_room', (data) => {
+        console.log("joining a room", data.roomid);
+        socket.join(data.roomid);
+    });
 
-    socket.on('msg_send', (data) => {
+    socket.on('msg_send', async (data) => {
         console.log(data);
-        // io.emit('msg_rcvd' , data);
-        // socket.emit('msg_rcvd' , data);
-            socket.broadcast.emit('msg_rcvd' , data);
-    })
 
+        // Save to database
+        const chat = await Chat.create({
+            roomId: data.roomid,
+            user: data.username,
+            content: data.msg
+        });
+
+        // Emit to clients in the same room
+        io.to(data.roomid).emit('msg_rcvd', data);
+    });
+
+    socket.on('typing', (data) => {
+        socket.broadcast.to(data.roomid).emit('someone_typing');
+    });
 });
 
+// MIDDLEWARE & VIEW ENGINE
+app.set('view engine', 'ejs');
+app.use('/', express.static(__dirname + '/public'));
 
-app.use('/', express.static(__dirname + '/public')); 
+// ROUTES
+app.get('/chat/:roomid', async (req, res) => {
+    const chats = await Chat.find({
+        roomId: req.params.roomid
+    }).select('content user');
+    
+    console.log(chats);
 
-server.listen(3000 , () => {
-    console.log("Server started")
+    res.render('index', {
+        name: 'Sanket',
+        id: req.params.roomid,
+        chats: chats
+    });
+});
+
+// SERVER LISTEN
+server.listen(3000, async () => {
+    console.log('Server started');
+    await connect();
+    console.log("mongo db connected");
 });
